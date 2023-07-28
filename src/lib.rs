@@ -2,7 +2,9 @@ use ctor::{ctor, dtor};
 use env_logger::{self, Env, Target};
 use libmem::*;
 use log::info;
+use once_cell::sync::OnceCell;
 use std::env;
+use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
 use std::mem;
@@ -61,6 +63,9 @@ extern "C" fn hk_gl_drawframe(w: i32, h: i32, changelod: f32, curfps: f32, elaps
     return orig(w, h, changelod, curfps, elapsed);
 }
 
+static mut menu_name: OnceCell<CString> = OnceCell::new();
+static mut menu_title: OnceCell<CString> = OnceCell::new();
+
 #[ctor]
 unsafe fn lib_entry() {
     setup_logger();
@@ -76,6 +81,32 @@ unsafe fn lib_entry() {
     info!("Local Player Health: {}", *(player1.health()));
     *(player1.health()) = 1000;
     info!("Set Player Health to 1000");
+
+    type addmenu_fn = extern "C" fn(usize, usize, bool, usize, usize, bool, bool) -> *const ();
+    let addmenu = unsafe {
+        mem::transmute::<usize, addmenu_fn>(
+            LM_FindSymbolAddress(&ac_client, "_Z7addmenuPKcS0_bPFvPvbEPFbS1_ibEbb").unwrap(),
+        )
+    };
+    info!("addmenu Address: {:?}", addmenu);
+
+    let refreshsopmenu = LM_FindSymbolAddress(&ac_client, "_Z14refreshsopmenuPvb").unwrap();
+
+    menu_name.set(CString::new("rustycube").unwrap()).unwrap();
+    menu_title.set(CString::new("Rusty Cube").unwrap()).unwrap();
+    let menu = addmenu(
+        menu_name.get().unwrap().as_ptr() as usize,
+        menu_title.get().unwrap().as_ptr() as usize,
+        false,
+        refreshsopmenu,
+        0,
+        false,
+        false,
+    );
+
+    let curmenu = LM_FindSymbolAddress(&ac_client, "curmenu").unwrap() as *mut *const ();
+    info!("curmenu Address: {:?}", curmenu);
+    *curmenu = menu;
 
     let sdl_window = LM_FindSymbolAddress(&ac_client, "screen").unwrap();
     info!("SDL Window Handle: {:#x}", sdl_window);
