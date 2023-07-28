@@ -4,10 +4,10 @@ use libmem::*;
 use log::info;
 use once_cell::sync::OnceCell;
 use std::env;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::Write;
-use std::mem;
+use std::mem::{self, MaybeUninit};
 
 macro_rules! ptr_offset {
     ($ptr:expr, $offset:expr) => {
@@ -70,6 +70,8 @@ static mut menuitemmanual_addr: usize = 0;
 static mut menureset_addr: usize = 0;
 static menu_content: OnceCell<CString> = OnceCell::new();
 static menu_action: OnceCell<CString> = OnceCell::new();
+static menuitem_hello: OnceCell<CString> = OnceCell::new();
+static menuitem_hello_action: OnceCell<CString> = OnceCell::new();
 
 extern "C" fn refreshmenu(menu: *const (), init: bool) {
     type menuitemmanual_fn = extern "C" fn(*const (), *const i8, *const i8, *const (), *const i8);
@@ -78,6 +80,17 @@ extern "C" fn refreshmenu(menu: *const (), init: bool) {
     let menureset = unsafe { mem::transmute::<usize, menureset_fn>(menureset_addr) };
 
     menureset(menu);
+
+    let content = menuitem_hello.get_or_init(|| CString::new("Hello").unwrap());
+    let action = menuitem_hello_action.get_or_init(|| CString::new("rustysay hello").unwrap());
+
+    menuitemmanual(
+        menu,
+        content.as_ptr(),
+        action.as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
 
     let content = menu_content.get_or_init(|| CString::new("Close").unwrap());
     let action = menu_action.get_or_init(|| CString::new("closecurmenu").unwrap());
@@ -95,9 +108,44 @@ static mut command_menu: OnceCell<CString> = OnceCell::new();
 static mut command_sig: OnceCell<CString> = OnceCell::new();
 static mut curmenu: *mut *const () = 0 as *mut *const ();
 static mut mymenu: *const () = 0 as *const ();
+static mut command_mysay: OnceCell<CString> = OnceCell::new();
+static mut command_mysay_sig: OnceCell<CString> = OnceCell::new();
 
 extern "C" fn cmdrustymenu() {
     unsafe { *curmenu = mymenu };
+}
+
+static mut rustysay_str: MaybeUninit<CString> = MaybeUninit::uninit();
+static mut rustysay_action: OnceCell<CString> = OnceCell::new();
+static mut menu_rustysay: *const () = 0 as *const ();
+static mut menu_rustysay_name: OnceCell<CString> = OnceCell::new();
+static mut menu_rustysay_title: OnceCell<CString> = OnceCell::new();
+
+extern "C" fn cmdrustysay(text: *const i8) {
+    info!("RustySay: {:?}", text);
+    let cstr = unsafe { CStr::from_ptr(text) };
+    unsafe { rustysay_str.write(cstr.to_owned()) };
+    unsafe { *curmenu = menu_rustysay };
+}
+
+extern "C" fn refreshrustysay(menu: *const (), init: bool) {
+    type menuitemmanual_fn = extern "C" fn(*const (), *const i8, *const i8, *const (), *const i8);
+    type menureset_fn = extern "C" fn(*const ());
+    let menuitemmanual = unsafe { mem::transmute::<usize, menuitemmanual_fn>(menuitemmanual_addr) };
+    let menureset = unsafe { mem::transmute::<usize, menureset_fn>(menureset_addr) };
+
+    menureset(menu);
+
+    let content = unsafe { rustysay_str.assume_init_ref() };
+    let action = unsafe { rustysay_action.get_or_init(|| CString::new("closecurmenu").unwrap()) };
+
+    menuitemmanual(
+        menu,
+        content.as_ptr(),
+        action.as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
 }
 
 #[ctor]
@@ -136,6 +184,22 @@ unsafe fn lib_entry() {
         false,
     );
 
+    menu_rustysay_name
+        .set(CString::new("rustysay").unwrap())
+        .unwrap();
+    menu_rustysay_title
+        .set(CString::new("RustySay").unwrap())
+        .unwrap();
+    menu_rustysay = addmenu(
+        menu_rustysay_name.get().unwrap().as_ptr() as usize,
+        menu_rustysay_title.get().unwrap().as_ptr() as usize,
+        true,
+        refreshrustysay as *const () as usize,
+        0,
+        false,
+        false,
+    );
+
     curmenu = LM_FindSymbolAddress(&ac_client, "curmenu").unwrap() as *mut *const ();
     info!("curmenu Address: {:?}", curmenu);
     *curmenu = mymenu;
@@ -156,6 +220,16 @@ unsafe fn lib_entry() {
         command_menu.get().unwrap().as_ptr(),
         cmdrustymenu as *const (),
         command_sig.get().unwrap().as_ptr(),
+    );
+
+    command_mysay
+        .set(CString::new("rustysay").unwrap())
+        .unwrap();
+    command_mysay_sig.set(CString::new("s").unwrap()).unwrap();
+    addcommand(
+        command_mysay.get().unwrap().as_ptr(),
+        cmdrustysay as *const (),
+        command_mysay_sig.get().unwrap().as_ptr(),
     );
 
     let sdl_window = LM_FindSymbolAddress(&ac_client, "screen").unwrap();
