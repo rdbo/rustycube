@@ -66,6 +66,31 @@ extern "C" fn hk_gl_drawframe(w: i32, h: i32, changelod: f32, curfps: f32, elaps
 static mut menu_name: OnceCell<CString> = OnceCell::new();
 static mut menu_title: OnceCell<CString> = OnceCell::new();
 
+static mut menuitemmanual_addr: usize = 0;
+static mut menureset_addr: usize = 0;
+static menu_content: OnceCell<CString> = OnceCell::new();
+static menu_action: OnceCell<CString> = OnceCell::new();
+
+extern "C" fn refreshmenu(menu: *const (), init: bool) {
+    type menuitemmanual_fn = extern "C" fn(*const (), *const i8, *const i8, *const (), *const i8);
+    type menureset_fn = extern "C" fn(*const ());
+    let menuitemmanual = unsafe { mem::transmute::<usize, menuitemmanual_fn>(menuitemmanual_addr) };
+    let menureset = unsafe { mem::transmute::<usize, menureset_fn>(menureset_addr) };
+
+    menureset(menu);
+
+    let content = menu_content.get_or_init(|| CString::new("Close").unwrap());
+    let action = menu_action.get_or_init(|| CString::new("closecurmenu").unwrap());
+
+    menuitemmanual(
+        menu,
+        content.as_ptr(),
+        action.as_ptr(),
+        std::ptr::null(),
+        std::ptr::null(),
+    );
+}
+
 #[ctor]
 unsafe fn lib_entry() {
     setup_logger();
@@ -90,15 +115,13 @@ unsafe fn lib_entry() {
     };
     info!("addmenu Address: {:?}", addmenu);
 
-    let refreshsopmenu = LM_FindSymbolAddress(&ac_client, "_Z14refreshsopmenuPvb").unwrap();
-
     menu_name.set(CString::new("rustycube").unwrap()).unwrap();
     menu_title.set(CString::new("Rusty Cube").unwrap()).unwrap();
     let menu = addmenu(
         menu_name.get().unwrap().as_ptr() as usize,
         menu_title.get().unwrap().as_ptr() as usize,
-        false,
-        refreshsopmenu,
+        true,
+        refreshmenu as *const () as usize,
         0,
         false,
         false,
@@ -107,6 +130,11 @@ unsafe fn lib_entry() {
     let curmenu = LM_FindSymbolAddress(&ac_client, "curmenu").unwrap() as *mut *const ();
     info!("curmenu Address: {:?}", curmenu);
     *curmenu = menu;
+
+    menuitemmanual_addr =
+        LM_FindSymbolAddress(&ac_client, "_Z14menuitemmanualPvPcS0_P5colorPKc").unwrap();
+
+    menureset_addr = LM_FindSymbolAddress(&ac_client, "_Z9menuresetPv").unwrap();
 
     let sdl_window = LM_FindSymbolAddress(&ac_client, "screen").unwrap();
     info!("SDL Window Handle: {:#x}", sdl_window);
