@@ -91,6 +91,15 @@ extern "C" fn refreshmenu(menu: *const (), init: bool) {
     );
 }
 
+static mut command_menu: OnceCell<CString> = OnceCell::new();
+static mut command_sig: OnceCell<CString> = OnceCell::new();
+static mut curmenu: *mut *const () = 0 as *mut *const ();
+static mut mymenu: *const () = 0 as *const ();
+
+extern "C" fn cmdrustymenu() {
+    unsafe { *curmenu = mymenu };
+}
+
 #[ctor]
 unsafe fn lib_entry() {
     setup_logger();
@@ -117,7 +126,7 @@ unsafe fn lib_entry() {
 
     menu_name.set(CString::new("rustycube").unwrap()).unwrap();
     menu_title.set(CString::new("Rusty Cube").unwrap()).unwrap();
-    let menu = addmenu(
+    mymenu = addmenu(
         menu_name.get().unwrap().as_ptr() as usize,
         menu_title.get().unwrap().as_ptr() as usize,
         true,
@@ -127,14 +136,27 @@ unsafe fn lib_entry() {
         false,
     );
 
-    let curmenu = LM_FindSymbolAddress(&ac_client, "curmenu").unwrap() as *mut *const ();
+    curmenu = LM_FindSymbolAddress(&ac_client, "curmenu").unwrap() as *mut *const ();
     info!("curmenu Address: {:?}", curmenu);
-    *curmenu = menu;
+    *curmenu = mymenu;
 
     menuitemmanual_addr =
         LM_FindSymbolAddress(&ac_client, "_Z14menuitemmanualPvPcS0_P5colorPKc").unwrap();
 
     menureset_addr = LM_FindSymbolAddress(&ac_client, "_Z9menuresetPv").unwrap();
+
+    type addcommand_fn = extern "C" fn(*const i8, *const (), *const i8) -> bool;
+    let addcommand_addr = LM_FindSymbolAddress(&ac_client, "_Z10addcommandPKcPFvvES0_").unwrap();
+    let addcommand = unsafe { mem::transmute::<usize, addcommand_fn>(addcommand_addr) };
+    command_menu
+        .set(CString::new("rustycube").unwrap())
+        .unwrap();
+    command_sig.set(CString::new("").unwrap()).unwrap();
+    addcommand(
+        command_menu.get().unwrap().as_ptr(),
+        cmdrustymenu as *const (),
+        command_sig.get().unwrap().as_ptr(),
+    );
 
     let sdl_window = LM_FindSymbolAddress(&ac_client, "screen").unwrap();
     info!("SDL Window Handle: {:#x}", sdl_window);
